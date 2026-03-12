@@ -2,12 +2,9 @@ name: 🎯 Sniper System Auto Scan
 
 on:
   schedule:
-    # Runs at market opens (UTC times)
     - cron: '0 8 * * 1-5'   # 8:00 AM UTC (London Open)
     - cron: '30 13 * * 1-5' # 1:30 PM UTC (NY Open)
     - cron: '0 16 * * 1-5'  # 4:00 PM UTC (London Close)
-  
-  # Allow manual trigger
   workflow_dispatch:
     inputs:
       test_mode:
@@ -21,10 +18,10 @@ jobs:
     
     steps:
     - name: 📥 Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4  # Also updated to v4 for good practice
     
     - name: 🐍 Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5  # Updated to v5
       with:
         python-version: '3.10'
     
@@ -49,7 +46,8 @@ jobs:
     
     - name: 📤 Upload logs as artifact
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4  # ⬅️ CHANGED FROM v3 TO v4
       with:
         name: scan-logs
         path: scan_logs/
+        retention-days: 5  # Optional: Set how long to keep logs
