@@ -1,0 +1,55 @@
+name: 🎯 Sniper System Auto Scan
+
+on:
+  schedule:
+    # Runs at market opens (UTC times)
+    - cron: '0 8 * * 1-5'   # 8:00 AM UTC (London Open)
+    - cron: '30 13 * * 1-5' # 1:30 PM UTC (NY Open)
+    - cron: '0 16 * * 1-5'  # 4:00 PM UTC (London Close)
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Run test mode?'
+        required: false
+        default: 'false'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v3
+    
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🔍 Run Market Scan
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        echo "🎯 Starting Sniper System Scan..."
+        python sniper_system.py
+    
+    - name: 💾 Save scan logs
+      if: always()
+      run: |
+        mkdir -p scan_logs
+        echo "Scan completed at $(date)" >> scan_logs/last_scan.log
+    
+    - name: 📤 Upload logs as artifact
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: scan-logs
+        path: scan_logs/
