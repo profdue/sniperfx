@@ -1,5 +1,6 @@
 # ============================================
-# PROFESSIONAL SNIPER TRADING SYSTEM v4.1
+# PROFESSIONAL SNIPER TRADING SYSTEM v4.2
+# GITHUB ACTIONS COMPATIBLE
 # ============================================
 
 import yfinance as yf
@@ -10,6 +11,7 @@ from scipy.signal import argrelextrema
 import requests
 import json
 import os
+import sys
 from dotenv import load_dotenv
 import warnings
 warnings.filterwarnings('ignore')
@@ -21,11 +23,16 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'YOUR_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID')
 
+# Detect if running in GitHub Actions
+IN_GITHUB_ACTIONS = os.getenv('GITHUB_ACTIONS') == 'true'
+
 print("\n" + "="*60)
-print("🎯 PROFESSIONAL SNIPER TRADING SYSTEM v4.1")
+print("🎯 PROFESSIONAL SNIPER TRADING SYSTEM v4.2")
 print("="*60)
 print("\n⚡ TELEGRAM ALERTS ENABLED")
 print("⚡ Ready for live trading...")
+if IN_GITHUB_ACTIONS:
+    print("⚡ Running in GitHub Actions (automated mode)")
 
 class TelegramNotifier:
     """Handle Telegram notifications"""
@@ -116,8 +123,9 @@ class SniperSystem:
         # Initialize Telegram
         self.telegram = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
         
-        # Send startup message
-        startup_msg = f"""
+        # Send startup message (only if not in GitHub Actions or first run)
+        if not IN_GITHUB_ACTIONS:
+            startup_msg = f"""
 🤖 <b>Sniper System Started</b>
 ━━━━━━━━━━━━━━━━━━━━━
 Account: ${account_size}
@@ -126,7 +134,7 @@ Pairs: {', '.join(self.pairs)}
 ━━━━━━━━━━━━━━━━━━━━━
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
 """
-        self.telegram.send_message(startup_msg)
+            self.telegram.send_message(startup_msg)
         
         # ============================================
         # FINAL CALIBRATED PARAMETERS
@@ -1023,52 +1031,73 @@ Pairs: {', '.join(self.pairs)}
         self.telegram.send_message(summary)
 
 
+def run_automated_scan():
+    """Run scan without user input (for GitHub Actions)"""
+    print("🚀 Running automated scan...")
+    system = SniperSystem()
+    system.scan_all()
+    print("✅ Scan complete!")
+
 def main():
     """Main execution"""
     
     print("\n" + "="*60)
-    print("🎯 PROFESSIONAL SNIPER SYSTEM v4.1")
-    print("© 2026 - Telegram Enabled")
+    print("🎯 PROFESSIONAL SNIPER SYSTEM v4.2")
+    print("© 2026 - GitHub Actions Compatible")
     print("="*60)
     
     print("\n✅ 87.5% Validation Accuracy")
     print("✅ Gold: 6.5x threshold")
     print("✅ Telegram Alerts: ON")
     
+    # Check if running in GitHub Actions
+    if IN_GITHUB_ACTIONS:
+        print("\n🤖 Detected GitHub Actions environment")
+        print("🚀 Running automated scan...")
+        run_automated_scan()
+        return
+    
+    # Interactive mode for local use
     print("\n" + "="*60)
     print("📋 SELECT MODE:")
     print("="*60)
     print("1. 🎯 LIVE SCAN (run once)")
     print("2. 🏆 TEST GOLD ONLY")
     
-    choice = input("\nEnter choice (1-2): ").strip()
-    
-    if choice == '2':
-        print("\n" + "="*60)
-        print("🏆 TESTING GOLD ONLY")
-        print("="*60)
+    try:
+        choice = input("\nEnter choice (1-2): ").strip()
         
-        system = SniperSystem()
-        test_dates = [
-            {'date': datetime(2026, 1, 25), 'name': 'Jan 25 (6.4x - should be NO)'},
-            {'date': datetime(2026, 1, 27), 'name': 'Jan 27 (9.4x - should be YES)'},
-            {'date': datetime(2026, 1, 28), 'name': 'Jan 28 (4.1x - should be NO)'},
-        ]
-        
-        for test in test_dates:
-            print(f"\n📅 {test['name']}")
-            system.scan_all(test_date=test['date'])
-    
-    else:
-        # Single scan
-        system = SniperSystem()
-        setups = system.scan_all()
-        
-        if not setups:
+        if choice == '2':
             print("\n" + "="*60)
-            print("🟡 NO TRADES TODAY")
+            print("🏆 TESTING GOLD ONLY")
             print("="*60)
-            print("\n✅ Professional patience - waiting for the right setup.")
+            
+            system = SniperSystem()
+            test_dates = [
+                {'date': datetime(2026, 1, 25), 'name': 'Jan 25 (6.4x - should be NO)'},
+                {'date': datetime(2026, 1, 27), 'name': 'Jan 27 (9.4x - should be YES)'},
+                {'date': datetime(2026, 1, 28), 'name': 'Jan 28 (4.1x - should be NO)'},
+            ]
+            
+            for test in test_dates:
+                print(f"\n📅 {test['name']}")
+                system.scan_all(test_date=test['date'])
+        
+        else:
+            # Live scan
+            system = SniperSystem()
+            setups = system.scan_all()
+            
+            if not setups:
+                print("\n" + "="*60)
+                print("🟡 NO TRADES TODAY")
+                print("="*60)
+                print("\n✅ Professional patience - waiting for the right setup.")
+    
+    except EOFError:
+        # This handles the case when running in non-interactive environment
+        print("\n⚠️ Non-interactive mode detected, running automated scan...")
+        run_automated_scan()
 
 
 if __name__ == "__main__":
