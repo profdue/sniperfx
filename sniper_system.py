@@ -1,6 +1,6 @@
 # ============================================
 # PROFESSIONAL SNIPER TRADING SYSTEM v4.2
-# GITHUB ACTIONS COMPATIBLE
+# GITHUB ACTIONS COMPATIBLE - FULLY FIXED
 # ============================================
 
 import yfinance as yf
@@ -1024,8 +1024,11 @@ Pairs: {', '.join(self.pairs)}
                     reasons[log['reason_code']] = []
                 reasons[log['reason_code']].append(log['symbol'])
             
+            # FIXED: Convert set to list before slicing
             for reason, symbols in list(reasons.items())[:3]:
-                summary += f"• {reason}: {', '.join(set(symbols)[:3])}\n"
+                # Convert symbols list to set to remove duplicates, then back to list for slicing
+                unique_symbols = list(set(symbols))[:3]
+                summary += f"• {reason}: {', '.join(unique_symbols)}\n"
         
         summary += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}"
         self.telegram.send_message(summary)
