@@ -5,12 +5,7 @@ on:
     - cron: '0 8 * * 1-5'   # 8:00 AM UTC (London Open)
     - cron: '30 13 * * 1-5' # 1:30 PM UTC (NY Open)
     - cron: '0 16 * * 1-5'  # 4:00 PM UTC (London Close)
-  workflow_dispatch:
-    inputs:
-      test_mode:
-        description: 'Run test mode?'
-        required: false
-        default: 'false'
+  workflow_dispatch:  # Allow manual trigger
 
 jobs:
   scan:
@@ -18,10 +13,10 @@ jobs:
     
     steps:
     - name: 📥 Checkout code
-      uses: actions/checkout@v4  # Also updated to v4 for good practice
+      uses: actions/checkout@v4
     
     - name: 🐍 Set up Python
-      uses: actions/setup-python@v5  # Updated to v5
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
     
@@ -34,6 +29,7 @@ jobs:
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        GITHUB_ACTIONS: true
       run: |
         echo "🎯 Starting Sniper System Scan..."
         python sniper_system.py
@@ -46,8 +42,8 @@ jobs:
     
     - name: 📤 Upload logs as artifact
       if: always()
-      uses: actions/upload-artifact@v4  # ⬅️ CHANGED FROM v3 TO v4
+      uses: actions/upload-artifact@v4
       with:
         name: scan-logs
         path: scan_logs/
-        retention-days: 5  # Optional: Set how long to keep logs
+        retention-days: 5
