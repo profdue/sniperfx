@@ -1,6 +1,6 @@
 # ============================================
 # PROFESSIONAL SNIPER TRADING SYSTEM v4.2
-# GITHUB ACTIONS COMPATIBLE - FULLY FIXED
+# COMPLETE GITHUB VERSION WITH TELEGRAM
 # ============================================
 
 import yfinance as yf
@@ -20,8 +20,8 @@ warnings.filterwarnings('ignore')
 load_dotenv()
 
 # Telegram Configuration
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'YOUR_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 # Detect if running in GitHub Actions
 IN_GITHUB_ACTIONS = os.getenv('GITHUB_ACTIONS') == 'true'
@@ -41,6 +41,7 @@ class TelegramNotifier:
         self.bot_token = str(bot_token)
         self.chat_id = str(chat_id)
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+        print(f"📱 Telegram initialized for chat_id: {self.chat_id}")
         
     def send_message(self, message):
         """Send text message to Telegram"""
@@ -51,8 +52,14 @@ class TelegramNotifier:
                 'text': message,
                 'parse_mode': 'HTML'
             }
+            print(f"📤 Sending message to Telegram...")
             response = requests.post(url, json=payload, timeout=10)
-            return response.json()
+            result = response.json()
+            if result.get('ok'):
+                print(f"✅ Telegram message sent successfully!")
+            else:
+                print(f"❌ Telegram error: {result}")
+            return result
         except Exception as e:
             print(f"❌ Telegram error: {e}")
             return None
@@ -62,8 +69,12 @@ class TelegramNotifier:
         
         if 'LONG' in signal['type']:
             rr1 = (signal['target1'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
+            rr2 = (signal['target2'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
+            rr3 = (signal['target3'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
         else:
             rr1 = (signal['entry_market'] - signal['target1']) / (signal['stop'] - signal['entry_market'])
+            rr2 = (signal['entry_market'] - signal['target2']) / (signal['stop'] - signal['entry_market'])
+            rr3 = (signal['entry_market'] - signal['target3']) / (signal['stop'] - signal['entry_market'])
         
         emoji = "🟢 LONG" if 'LONG' in signal['type'] else "🔴 SHORT"
         if signal['symbol'] == 'XAUUSD':
@@ -97,11 +108,46 @@ class TelegramNotifier:
 <b>Lots:</b> {position['mini_lots']} MINI
 <b>Risk:</b> ${position['risk_amount']:.2f} ({position['risk_percent']:.1f}%)
 <b>R:R T1:</b> 1:{rr1:.2f}
+<b>R:R T2:</b> 1:{rr2:.2f}
+<b>R:R T3:</b> 1:{rr3:.2f}
 
 <b>━━━━━━━━━━━━━━━━━━━━━</b>
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
 """
         return message
+    
+    def format_summary(self, setups, scan_log):
+        """Format daily summary for Telegram"""
+        if setups:
+            summary = f"""
+<b>📊 DAILY SCAN COMPLETE</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+<b>✅ Setups Found:</b> {len(setups)}
+
+<b>Trades:</b>
+"""
+            for s in setups:
+                summary += f"• {s['signal']['symbol']} {s['signal']['type']} @ {s['signal']['entry_limit']:.5f}\n"
+        else:
+            summary = f"""
+<b>📊 DAILY SCAN COMPLETE</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+<b>🟡 NO TRADES TODAY</b>
+
+<b>Top Rejection Reasons:</b>
+"""
+            reasons = {}
+            for log in scan_log[-10:]:
+                if log['reason_code'] not in reasons:
+                    reasons[log['reason_code']] = []
+                reasons[log['reason_code']].append(log['symbol'])
+            
+            for reason, symbols in list(reasons.items())[:3]:
+                unique_symbols = list(set(symbols))[:3]
+                summary += f"• {reason}: {', '.join(unique_symbols)}\n"
+        
+        summary += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}"
+        return summary
 
 
 class SniperSystem:
@@ -121,6 +167,7 @@ class SniperSystem:
         }
         
         # Initialize Telegram
+        print("📱 Initializing Telegram notifier...")
         self.telegram = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
         
         # Send startup message (only if not in GitHub Actions or first run)
@@ -989,49 +1036,17 @@ Pairs: {', '.join(self.pairs)}
                         'is_fresh': signal.get('is_fresh_extreme', False)
                     })
                     
-                    # 🚨 SEND TELEGRAM ALERT
+                    # 🚨 SEND TELEGRAM ALERT FOR EACH SETUP
+                    print(f"\n📱 Sending Telegram alert for {pair}...")
                     alert = self.telegram.format_trade_alert(signal, position, analysis)
                     self.telegram.send_message(alert)
         
         # Send daily summary
-        self.send_daily_summary()
+        print("\n📱 Sending daily summary...")
+        summary = self.telegram.format_summary(self.setups, self.scan_log)
+        self.telegram.send_message(summary)
         
         return self.setups
-    
-    def send_daily_summary(self):
-        """Send daily scan summary to Telegram"""
-        if self.setups:
-            summary = f"""
-<b>📊 DAILY SCAN COMPLETE</b>
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-<b>✅ Setups Found:</b> {len(self.setups)}
-
-<b>Trades:</b>
-"""
-            for s in self.setups:
-                summary += f"• {s['signal']['symbol']} {s['signal']['type']} @ {s['signal']['entry_limit']:.5f}\n"
-        else:
-            summary = f"""
-<b>📊 DAILY SCAN COMPLETE</b>
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-<b>🟡 NO TRADES TODAY</b>
-
-<b>Top Rejection Reasons:</b>
-"""
-            reasons = {}
-            for log in self.scan_log[-10:]:
-                if log['reason_code'] not in reasons:
-                    reasons[log['reason_code']] = []
-                reasons[log['reason_code']].append(log['symbol'])
-            
-            # FIXED: Convert set to list before slicing
-            for reason, symbols in list(reasons.items())[:3]:
-                # Convert symbols list to set to remove duplicates, then back to list for slicing
-                unique_symbols = list(set(symbols))[:3]
-                summary += f"• {reason}: {', '.join(unique_symbols)}\n"
-        
-        summary += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}"
-        self.telegram.send_message(summary)
 
 
 def run_automated_scan():
@@ -1066,9 +1081,10 @@ def main():
     print("="*60)
     print("1. 🎯 LIVE SCAN (run once)")
     print("2. 🏆 TEST GOLD ONLY")
+    print("3. 📊 RUN VALIDATION (8 dates)")
     
     try:
-        choice = input("\nEnter choice (1-2): ").strip()
+        choice = input("\nEnter choice (1-3): ").strip()
         
         if choice == '2':
             print("\n" + "="*60)
@@ -1085,6 +1101,30 @@ def main():
             for test in test_dates:
                 print(f"\n📅 {test['name']}")
                 system.scan_all(test_date=test['date'])
+        
+        elif choice == '3':
+            print("\n" + "="*60)
+            print("📊 RUNNING VALIDATION...")
+            print("="*60)
+            
+            system = SniperSystem()
+            test_dates = [
+                datetime(2026, 3, 9), datetime(2026, 3, 8),
+                datetime(2026, 1, 27), datetime(2026, 1, 28),
+                datetime(2026, 1, 25), datetime(2026, 2, 15),
+                datetime(2026, 2, 20), datetime(2026, 3, 1)
+            ]
+            
+            for date in test_dates:
+                print(f"\n📅 Testing {date.strftime('%Y-%m-%d')}...")
+                system.scan_all(test_date=date)
+            
+            print("\n" + "="*60)
+            print("📊 VALIDATION COMPLETE")
+            print("="*60)
+            print(f"Total Scans: {system.stats['total_scans']}")
+            print(f"Setups Found: {system.stats['setups_found']}")
+            print(f"Setup Rate: {system.stats['setups_found']/system.stats['total_scans']*100:.1f}%")
         
         else:
             # Live scan
