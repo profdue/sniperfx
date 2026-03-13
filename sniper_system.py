@@ -1,6 +1,6 @@
 # ============================================
-# PROFESSIONAL SNIPER TRADING SYSTEM v4.2
-# COMPLETE GITHUB VERSION WITH TELEGRAM
+# PROFESSIONAL SNIPER TRADING SYSTEM v5.0
+# COMPLETE WITH TRADE TRACKING & R:R DISPLAY
 # ============================================
 
 import yfinance as yf
@@ -27,12 +27,285 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 IN_GITHUB_ACTIONS = os.getenv('GITHUB_ACTIONS') == 'true'
 
 print("\n" + "="*60)
-print("🎯 PROFESSIONAL SNIPER TRADING SYSTEM v4.2")
+print("🎯 PROFESSIONAL SNIPER TRADING SYSTEM v5.0")
 print("="*60)
 print("\n⚡ TELEGRAM ALERTS ENABLED")
+print("⚡ TRADE TRACKING ENABLED")
 print("⚡ Ready for live trading...")
 if IN_GITHUB_ACTIONS:
     print("⚡ Running in GitHub Actions (automated mode)")
+
+# ============================================
+# TRADE TRACKER CLASS
+# ============================================
+
+class TradeTracker:
+    """Tracks all trades and sends updates"""
+    
+    def __init__(self, telegram):
+        self.telegram = telegram
+        self.trades_file = 'active_trades.json'
+        self.history_file = 'trade_history.json'
+        self.load_trades()
+    
+    def load_trades(self):
+        """Load active trades from file"""
+        if os.path.exists(self.trades_file):
+            with open(self.trades_file, 'r') as f:
+                self.active_trades = json.load(f)
+        else:
+            self.active_trades = {}
+        
+        if os.path.exists(self.history_file):
+            with open(self.history_file, 'r') as f:
+                self.history = json.load(f)
+        else:
+            self.history = []
+    
+    def save_trades(self):
+        """Save active trades to file"""
+        with open(self.trades_file, 'w') as f:
+            json.dump(self.active_trades, f, indent=2)
+        with open(self.history_file, 'w') as f:
+            json.dump(self.history, f, indent=2)
+    
+    def add_trade(self, signal, position, analysis):
+        """Add a new trade to tracking"""
+        trade_id = f"{signal['symbol']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Calculate R:R for each target
+        if 'SHORT' in signal['type']:
+            rr1 = (signal['entry_market'] - signal['target1']) / (signal['stop'] - signal['entry_market'])
+            rr2 = (signal['entry_market'] - signal['target2']) / (signal['stop'] - signal['entry_market'])
+            rr3 = (signal['entry_market'] - signal['target3']) / (signal['stop'] - signal['entry_market'])
+        else:
+            rr1 = (signal['target1'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
+            rr2 = (signal['target2'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
+            rr3 = (signal['target3'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
+        
+        trade = {
+            'id': trade_id,
+            'symbol': signal['symbol'],
+            'type': signal['type'],
+            'subtype': signal['subtype'],
+            'entry': signal['entry_limit'],
+            'stop': signal['stop'],
+            'target1': signal['target1'],
+            'target2': signal['target2'],
+            'target3': signal['target3'],
+            'rr1': round(rr1, 2),
+            'rr2': round(rr2, 2),
+            'rr3': round(rr3, 2),
+            'lots': position['mini_lots'],
+            'risk_amount': position['risk_amount'],
+            'entry_time': datetime.now().isoformat(),
+            'status': 'ACTIVE',
+            'hit_targets': [],
+            'rejection': signal.get('rejection_score', 0),
+            'regime': analysis['regime']
+        }
+        
+        self.active_trades[trade_id] = trade
+        self.save_trades()
+        
+        # Send confirmation
+        emoji = "🔴 SHORT" if 'SHORT' in signal['type'] else "🟢 LONG"
+        msg = f"""
+<b>📈 TRADE RECORDED - NOW TRACKING</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+
+<b>{emoji} {signal['symbol']}</b>
+<b>Entry:</b> <code>{signal['entry_limit']:.5f}</code>
+<b>Stop:</b> <code>{signal['stop']:.5f}</code>
+<b>Risk:</b> ${position['risk_amount']:.2f} ({position['risk_percent']:.1f}%)
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+<b>🎯 TARGETS (with R:R)</b>
+<b>T1:</b> <code>{signal['target1']:.5f}</code> (1:{rr1:.2f})
+<b>T2:</b> <code>{signal['target2']:.5f}</code> (1:{rr2:.2f})
+<b>T3:</b> <code>{signal['target3']:.5f}</code> (1:{rr3:.2f})
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+<i>I'll alert you when any target or stop is hit!</i>
+"""
+        self.telegram.send_message(msg)
+    
+    def check_trades(self, current_prices):
+        """Check all active trades against current prices"""
+        updates = []
+        
+        for trade_id, trade in list(self.active_trades.items()):
+            symbol = trade['symbol']
+            if symbol not in current_prices:
+                continue
+            
+            current = current_prices[symbol]
+            result = self.check_trade_status(trade, current)
+            
+            if result:
+                updates.append(result)
+                if trade['status'] == 'CLOSED':
+                    # Move to history
+                    trade['close_time'] = datetime.now().isoformat()
+                    trade['close_price'] = current
+                    self.history.append(trade)
+                    del self.active_trades[trade_id]
+        
+        if updates:
+            self.save_trades()
+        
+        return updates
+    
+    def check_trade_status(self, trade, current_price):
+        """Check if trade hit any levels"""
+        
+        if 'SHORT' in trade['type']:
+            # For shorts, price going DOWN is good
+            if current_price <= trade['target1'] and 1 not in trade['hit_targets']:
+                trade['hit_targets'].append(1)
+                return self.target_hit(trade, 1, current_price)
+            
+            elif current_price <= trade['target2'] and 2 not in trade['hit_targets']:
+                trade['hit_targets'].append(2)
+                return self.target_hit(trade, 2, current_price)
+            
+            elif current_price <= trade['target3'] and 3 not in trade['hit_targets']:
+                trade['hit_targets'].append(3)
+                trade['status'] = 'CLOSED'
+                return self.target_hit(trade, 3, current_price)
+            
+            elif current_price >= trade['stop']:
+                trade['status'] = 'CLOSED'
+                return self.stop_hit(trade, current_price)
+        
+        else:  # LONG
+            if current_price >= trade['target1'] and 1 not in trade['hit_targets']:
+                trade['hit_targets'].append(1)
+                return self.target_hit(trade, 1, current_price)
+            
+            elif current_price >= trade['target2'] and 2 not in trade['hit_targets']:
+                trade['hit_targets'].append(2)
+                return self.target_hit(trade, 2, current_price)
+            
+            elif current_price >= trade['target3'] and 3 not in trade['hit_targets']:
+                trade['hit_targets'].append(3)
+                trade['status'] = 'CLOSED'
+                return self.target_hit(trade, 3, current_price)
+            
+            elif current_price <= trade['stop']:
+                trade['status'] = 'CLOSED'
+                return self.stop_hit(trade, current_price)
+        
+        return None
+    
+    def target_hit(self, trade, target_num, current_price):
+        """Handle target hit"""
+        # Calculate profit
+        if 'SHORT' in trade['type']:
+            pips = (trade['entry'] - current_price) * 10000 if 'JPY' not in trade['symbol'] else (trade['entry'] - current_price) * 100
+            profit = pips * trade['lots']
+        else:
+            pips = (current_price - trade['entry']) * 10000 if 'JPY' not in trade['symbol'] else (current_price - trade['entry']) * 100
+            profit = pips * trade['lots']
+        
+        # Get R:R for this target
+        rr = trade[f'rr{target_num}']
+        
+        status = "🏆 FINAL TARGET - TRADE CLOSED" if target_num == 3 else f"✅ TARGET {target_num} HIT"
+        
+        msg = f"""
+<b>{status}</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+
+<b>{'🔴' if 'SHORT' in trade['type'] else '🟢'} {trade['symbol']}</b>
+<b>Entry:</b> <code>{trade['entry']:.5f}</code>
+<b>Target {target_num}:</b> <code>{current_price:.5f}</code>
+<b>R:R Achieved:</b> 1:{rr}
+
+<b>💰 PROFIT:</b> <b>${profit:.2f}</b>
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+{'' if target_num == 3 else f'<i>Still holding for target {target_num + 1}...</i>'}
+"""
+        return msg
+    
+    def stop_hit(self, trade, current_price):
+        """Handle stop loss hit"""
+        # Calculate loss
+        if 'SHORT' in trade['type']:
+            pips = (current_price - trade['entry']) * 10000 if 'JPY' not in trade['symbol'] else (current_price - trade['entry']) * 100
+        else:
+            pips = (trade['entry'] - current_price) * 10000 if 'JPY' not in trade['symbol'] else (trade['entry'] - current_price) * 100
+        
+        loss = pips * trade['lots']
+        
+        msg = f"""
+<b>❌ STOP LOSS HIT - TRADE CLOSED</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+
+<b>{'🔴' if 'SHORT' in trade['type'] else '🟢'} {trade['symbol']}</b>
+<b>Entry:</b> <code>{trade['entry']:.5f}</code>
+<b>Stop:</b> <code>{current_price:.5f}</code>
+
+<b>📉 LOSS:</b> <b>${loss:.2f}</b>
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+<i>Better luck next time! 🎯</i>
+"""
+        return msg
+    
+    def weekly_report(self):
+        """Generate weekly performance report"""
+        # Filter trades from last 7 days
+        week_ago = datetime.now() - timedelta(days=7)
+        week_trades = [t for t in self.history 
+                      if datetime.fromisoformat(t['close_time']) > week_ago]
+        
+        if not week_trades:
+            return "<b>📊 No trades this week</b>"
+        
+        wins = [t for t in week_trades if t['status'] == 'CLOSED' and t['close_price'] and 
+                (('SHORT' in t['type'] and t['close_price'] < t['entry']) or
+                 ('LONG' in t['type'] and t['close_price'] > t['entry']))]
+        
+        losses = [t for t in week_trades if t['status'] == 'CLOSED' and t not in wins]
+        
+        # Calculate P&L
+        total_pnl = 0
+        for t in week_trades:
+            if t['status'] == 'CLOSED':
+                if 'SHORT' in t['type']:
+                    pips = (t['entry'] - t['close_price']) * 10000 if 'JPY' not in t['symbol'] else (t['entry'] - t['close_price']) * 100
+                else:
+                    pips = (t['close_price'] - t['entry']) * 10000 if 'JPY' not in t['symbol'] else (t['close_price'] - t['entry']) * 100
+                total_pnl += pips * t['lots']
+        
+        win_rate = len(wins) / len(week_trades) * 100 if week_trades else 0
+        
+        # Calculate average R:R
+        avg_rr = np.mean([max(t['rr1'], t['rr2'], t['rr3']) for t in week_trades]) if week_trades else 0
+        
+        msg = f"""
+<b>📊 WEEKLY PERFORMANCE REPORT</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+
+<b>Trades:</b> {len(week_trades)}
+<b>✅ Wins:</b> {len(wins)}
+<b>❌ Losses:</b> {len(losses)}
+<b>Win Rate:</b> {win_rate:.1f}%
+<b>Avg R:R:</b> 1:{avg_rr:.2f}
+
+<b>💰 TOTAL P&L:</b> <b>${total_pnl:.2f}</b>
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+<i>Great job this week! 🎯</i>
+"""
+        return msg
+
+
+# ============================================
+# TELEGRAM NOTIFIER CLASS
+# ============================================
 
 class TelegramNotifier:
     """Handle Telegram notifications"""
@@ -65,16 +338,16 @@ class TelegramNotifier:
             return None
     
     def format_trade_alert(self, signal, position, analysis):
-        """Format trade signal for Telegram"""
+        """Format trade signal for Telegram with R:R next to each target"""
         
-        if 'LONG' in signal['type']:
-            rr1 = (signal['target1'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
-            rr2 = (signal['target2'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
-            rr3 = (signal['target3'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
-        else:
+        if 'SHORT' in signal['type']:
             rr1 = (signal['entry_market'] - signal['target1']) / (signal['stop'] - signal['entry_market'])
             rr2 = (signal['entry_market'] - signal['target2']) / (signal['stop'] - signal['entry_market'])
             rr3 = (signal['entry_market'] - signal['target3']) / (signal['stop'] - signal['entry_market'])
+        else:
+            rr1 = (signal['target1'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
+            rr2 = (signal['target2'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
+            rr3 = (signal['target3'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
         
         emoji = "🟢 LONG" if 'LONG' in signal['type'] else "🔴 SHORT"
         if signal['symbol'] == 'XAUUSD':
@@ -99,19 +372,19 @@ class TelegramNotifier:
 <b>💰 TRADE LEVELS</b>
 <b>LIMIT:</b> <code>{signal['entry_limit']:.5f}</code>
 <b>STOP:</b> <code>{signal['stop']:.5f}</code>
-<b>T1:</b> <code>{signal['target1']:.5f}</code>
-<b>T2:</b> <code>{signal['target2']:.5f}</code>
-<b>T3:</b> <code>{signal['target3']:.5f}</code>
+
+<b>🎯 TARGETS (with R:R)</b>
+<b>T1:</b> <code>{signal['target1']:.5f}</code> (1:{rr1:.2f})
+<b>T2:</b> <code>{signal['target2']:.5f}</code> (1:{rr2:.2f})
+<b>T3:</b> <code>{signal['target3']:.5f}</code> (1:{rr3:.2f})
 
 <b>━━━━━━━━━━━━━━━━━━━━━</b>
 <b>⚖️ POSITION SIZING</b>
 <b>Lots:</b> {position['mini_lots']} MINI
 <b>Risk:</b> ${position['risk_amount']:.2f} ({position['risk_percent']:.1f}%)
-<b>R:R T1:</b> 1:{rr1:.2f}
-<b>R:R T2:</b> 1:{rr2:.2f}
-<b>R:R T3:</b> 1:{rr3:.2f}
 
 <b>━━━━━━━━━━━━━━━━━━━━━</b>
+<i>I'll track this trade and alert you on hits!</i>
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
 """
         return message
@@ -150,8 +423,12 @@ class TelegramNotifier:
         return summary
 
 
+# ============================================
+# MAIN SNIPER SYSTEM CLASS
+# ============================================
+
 class SniperSystem:
-    """Complete trading system with Telegram alerts"""
+    """Complete trading system with Telegram alerts and trade tracking"""
     
     def __init__(self, account_size=10000, risk_percent=1.0):
         self.account = account_size
@@ -170,14 +447,19 @@ class SniperSystem:
         print("📱 Initializing Telegram notifier...")
         self.telegram = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
         
+        # Initialize Trade Tracker
+        print("📊 Initializing Trade Tracker...")
+        self.tracker = TradeTracker(self.telegram)
+        
         # Send startup message (only if not in GitHub Actions or first run)
         if not IN_GITHUB_ACTIONS:
             startup_msg = f"""
-🤖 <b>Sniper System Started</b>
+🤖 <b>Sniper System v5.0 Started</b>
 ━━━━━━━━━━━━━━━━━━━━━
 Account: ${account_size}
 Risk: {risk_percent}%
 Pairs: {', '.join(self.pairs)}
+Features: Trade Tracking + R:R Display
 ━━━━━━━━━━━━━━━━━━━━━
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
 """
@@ -1002,7 +1284,7 @@ Pairs: {', '.join(self.pairs)}
         }
     
     def scan_all(self, test_date=None):
-        """Scan all pairs with Telegram alerts"""
+        """Scan all pairs with Telegram alerts and trade tracking"""
         date_str = f" as of {test_date.strftime('%Y-%m-%d')}" if test_date else ""
         print("\n" + "="*60)
         print(f"📡 MARKET SCAN{date_str}")
@@ -1040,11 +1322,38 @@ Pairs: {', '.join(self.pairs)}
                     print(f"\n📱 Sending Telegram alert for {pair}...")
                     alert = self.telegram.format_trade_alert(signal, position, analysis)
                     self.telegram.send_message(alert)
+                    
+                    # 📊 ADD TO TRADE TRACKER
+                    self.tracker.add_trade(signal, position, analysis)
+        
+        # Get current prices for all pairs to check active trades
+        print("\n📊 Checking active trades...")
+        current_prices = {}
+        for pair in self.pairs:
+            try:
+                yf_symbol = "GC=F" if pair == 'XAUUSD' else f"{pair}=X"
+                data = yf.download(yf_symbol, period='1d', interval='1m', progress=False)
+                if not data.empty:
+                    current_prices[pair] = data['Close'].iloc[-1]
+                    print(f"   {pair}: {current_prices[pair]:.5f}")
+            except Exception as e:
+                print(f"   {pair}: Error getting price")
+        
+        # Check all active trades
+        updates = self.tracker.check_trades(current_prices)
+        for update in updates:
+            self.telegram.send_message(update)
         
         # Send daily summary
         print("\n📱 Sending daily summary...")
         summary = self.telegram.format_summary(self.setups, self.scan_log)
         self.telegram.send_message(summary)
+        
+        # Send weekly report on Fridays
+        if datetime.now().weekday() == 4:  # Friday
+            print("\n📊 Sending weekly report...")
+            report = self.tracker.weekly_report()
+            self.telegram.send_message(report)
         
         return self.setups
 
@@ -1060,13 +1369,15 @@ def main():
     """Main execution"""
     
     print("\n" + "="*60)
-    print("🎯 PROFESSIONAL SNIPER SYSTEM v4.2")
-    print("© 2026 - GitHub Actions Compatible")
+    print("🎯 PROFESSIONAL SNIPER SYSTEM v5.0")
+    print("© 2026 - Complete with Trade Tracking")
     print("="*60)
     
     print("\n✅ 87.5% Validation Accuracy")
     print("✅ Gold: 6.5x threshold")
     print("✅ Telegram Alerts: ON")
+    print("✅ Trade Tracking: ON")
+    print("✅ R:R Display: ON")
     
     # Check if running in GitHub Actions
     if IN_GITHUB_ACTIONS:
