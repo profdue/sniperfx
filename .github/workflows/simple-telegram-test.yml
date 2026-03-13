@@ -1,0 +1,27 @@
+name: Simple Telegram Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Direct Telegram Message
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          echo "Testing Telegram connection..."
+          echo "Bot Token: ${TELEGRAM_BOT_TOKEN:0:10}...${TELEGRAM_BOT_TOKEN: -5}"
+          echo "Chat ID: $TELEGRAM_CHAT_ID"
+          
+          # Send message using curl
+          curl -s -X POST \
+            https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage \
+            -d chat_id=${TELEGRAM_CHAT_ID} \
+            -d text="🔧 Test message from GitHub Actions" \
+            -d parse_mode="HTML"
+          
+          echo ""
+          echo "Test complete. Check your Telegram."
