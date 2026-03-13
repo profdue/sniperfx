@@ -1,4 +1,4 @@
-name: Simple Telegram Test
+name: Fixed Telegram Test
 
 on:
   workflow_dispatch:
@@ -7,21 +7,55 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Send Direct Telegram Message
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install requests
+        run: pip install requests
+      
+      - name: Test Telegram with Python
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          echo "Testing Telegram connection..."
-          echo "Bot Token: ${TELEGRAM_BOT_TOKEN:0:10}...${TELEGRAM_BOT_TOKEN: -5}"
-          echo "Chat ID: $TELEGRAM_CHAT_ID"
-          
-          # Send message using curl
-          curl -s -X POST \
-            https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage \
-            -d chat_id=${TELEGRAM_CHAT_ID} \
-            -d text="🔧 Test message from GitHub Actions" \
-            -d parse_mode="HTML"
-          
-          echo ""
-          echo "Test complete. Check your Telegram."
+          python -c "
+import requests
+import os
+
+bot_token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+chat_id = os.environ.get('TELEGRAM_CHAT_ID', '')
+
+print(f'Bot Token length: {len(bot_token)}')
+print(f'Chat ID: {chat_id}')
+
+# Test 1: Check bot info
+url = f'https://api.telegram.org/bot{bot_token}/getMe'
+try:
+    response = requests.get(url)
+    data = response.json()
+    if data.get('ok'):
+        print(f'✅ Bot connected: @{data["result"]["username"]}')
+    else:
+        print(f'❌ Bot error: {data}')
+except Exception as e:
+    print(f'❌ Error: {e}')
+
+# Test 2: Send message
+url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
+payload = {
+    'chat_id': chat_id,
+    'text': '✅ <b>Success!</b> Telegram is working with GitHub Actions!',
+    'parse_mode': 'HTML'
+}
+try:
+    response = requests.post(url, json=payload)
+    data = response.json()
+    if data.get('ok'):
+        print('✅ Message sent successfully!')
+    else:
+        print(f'❌ Failed: {data}')
+except Exception as e:
+    print(f'❌ Error: {e}')
+"
