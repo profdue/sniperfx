@@ -21,7 +21,31 @@ jobs:
     
     - name: Install dependencies
       run: |
+        pip install requests
         pip install -r requirements.txt
+    
+    - name: Direct Telegram Test
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        echo "🔧 Sending direct test message..."
+        python -c "
+import requests
+import os
+
+bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+
+url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
+payload = {
+    'chat_id': chat_id,
+    'text': '🔧 <b>DIRECT TEST</b>\\nThis message is sent BEFORE the scan!',
+    'parse_mode': 'HTML'
+}
+response = requests.post(url, json=payload)
+print(f'Response: {response.json()}')
+"
     
     - name: Run Market Scan
       env:
@@ -29,6 +53,30 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         GITHUB_ACTIONS: true
       run: python sniper_system.py
+    
+    - name: Another Direct Test
+      if: always()
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        echo "🔧 Sending final test message..."
+        python -c "
+import requests
+import os
+
+bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+
+url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
+payload = {
+    'chat_id': chat_id,
+    'text': '🔧 <b>FINAL TEST</b>\\nThis message is sent AFTER the scan!',
+    'parse_mode': 'HTML'
+}
+response = requests.post(url, json=payload)
+print(f'Response: {response.json()}')
+"
     
     - name: Upload logs
       if: always()
