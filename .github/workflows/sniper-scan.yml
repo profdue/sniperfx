@@ -12,76 +12,54 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    
-    - name: Install dependencies
-      run: |
-        pip install requests
-        pip install -r requirements.txt
-    
-    - name: Direct Telegram Test
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: |
-        echo "🔧 Sending direct test message..."
-        python -c "
-import requests
-import os
-
-bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
-chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-
-url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
-payload = {
-    'chat_id': chat_id,
-    'text': '🔧 <b>DIRECT TEST</b>\\nThis message is sent BEFORE the scan!',
-    'parse_mode': 'HTML'
-}
-response = requests.post(url, json=payload)
-print(f'Response: {response.json()}')
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests
+          pip install -r requirements.txt
+      
+      - name: Direct Telegram Test
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -c "
+import requests, os
+r=requests.post(f'https://api.telegram.org/bot{os.environ["TELEGRAM_BOT_TOKEN"]}/sendMessage',
+json={'chat_id':os.environ['TELEGRAM_CHAT_ID'],'text':'🔧 Test 1','parse_mode':'HTML'})
+print(r.json())
 "
-    
-    - name: Run Market Scan
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        GITHUB_ACTIONS: true
-      run: python sniper_system.py
-    
-    - name: Another Direct Test
-      if: always()
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: |
-        echo "🔧 Sending final test message..."
-        python -c "
-import requests
-import os
-
-bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
-chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-
-url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
-payload = {
-    'chat_id': chat_id,
-    'text': '🔧 <b>FINAL TEST</b>\\nThis message is sent AFTER the scan!',
-    'parse_mode': 'HTML'
-}
-response = requests.post(url, json=payload)
-print(f'Response: {response.json()}')
+      
+      - name: Run Market Scan
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_ACTIONS: true
+        run: python sniper_system.py
+      
+      - name: Final Test
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -c "
+import requests, os
+r=requests.post(f'https://api.telegram.org/bot{os.environ["TELEGRAM_BOT_TOKEN"]}/sendMessage',
+json={'chat_id':os.environ['TELEGRAM_CHAT_ID'],'text':'🔧 Test 2','parse_mode':'HTML'})
+print(r.json())
 "
-    
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: scan-logs
-        path: scan_logs/
-        retention-days: 5
+      
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-logs
+          path: scan_logs/
+          retention-days: 5
