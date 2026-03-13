@@ -29,12 +29,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python -c "
-import requests, os
-r=requests.post(f'https://api.telegram.org/bot{os.environ["TELEGRAM_BOT_TOKEN"]}/sendMessage',
-json={'chat_id':os.environ['TELEGRAM_CHAT_ID'],'text':'🔧 Test 1','parse_mode':'HTML'})
-print(r.json())
-"
+          python test.py
       
       - name: Run Market Scan
         env:
@@ -42,19 +37,6 @@ print(r.json())
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_ACTIONS: true
         run: python sniper_system.py
-      
-      - name: Final Test
-        if: always()
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python -c "
-import requests, os
-r=requests.post(f'https://api.telegram.org/bot{os.environ["TELEGRAM_BOT_TOKEN"]}/sendMessage',
-json={'chat_id':os.environ['TELEGRAM_CHAT_ID'],'text':'🔧 Test 2','parse_mode':'HTML'})
-print(r.json())
-"
       
       - name: Upload logs
         if: always()
