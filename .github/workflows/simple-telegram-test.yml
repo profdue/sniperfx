@@ -1,4 +1,4 @@
-name: Fixed Telegram Test
+name: Hardcoded Test
 
 on:
   workflow_dispatch:
@@ -7,55 +7,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      
       - name: Install requests
         run: pip install requests
-      
-      - name: Test Telegram with Python
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python -c "
-import requests
-import os
-
-bot_token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
-chat_id = os.environ.get('TELEGRAM_CHAT_ID', '')
-
-print(f'Bot Token length: {len(bot_token)}')
-print(f'Chat ID: {chat_id}')
-
-# Test 1: Check bot info
-url = f'https://api.telegram.org/bot{bot_token}/getMe'
-try:
-    response = requests.get(url)
-    data = response.json()
-    if data.get('ok'):
-        print(f'✅ Bot connected: @{data["result"]["username"]}')
-    else:
-        print(f'❌ Bot error: {data}')
-except Exception as e:
-    print(f'❌ Error: {e}')
-
-# Test 2: Send message
-url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
-payload = {
-    'chat_id': chat_id,
-    'text': '✅ <b>Success!</b> Telegram is working with GitHub Actions!',
-    'parse_mode': 'HTML'
-}
-try:
-    response = requests.post(url, json=payload)
-    data = response.json()
-    if data.get('ok'):
-        print('✅ Message sent successfully!')
-    else:
-        print(f'❌ Failed: {data}')
-except Exception as e:
-    print(f'❌ Error: {e}')
-"
+      - name: Run test
+        run: python test.py
