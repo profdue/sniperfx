@@ -2,10 +2,8 @@ name: 🎯 Sniper System Auto Scan
 
 on:
   schedule:
-    - cron: '0 8 * * 1-5'
-    - cron: '30 13 * * 1-5'
-    - cron: '0 16 * * 1-5'
-  workflow_dispatch:
+    - cron: '*/15 * * * 1-5'  # Runs EVERY 15 MINUTES Monday-Friday
+  workflow_dispatch:  # Allow manual trigger
 
 jobs:
   scan:
@@ -21,15 +19,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install requests
-          pip install -r requirements.txt
-      
-      - name: Direct Telegram Test
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python test.py
+          pip install requests yfinance pandas numpy scipy python-dotenv
       
       - name: Run Market Scan
         env:
@@ -37,11 +27,3 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_ACTIONS: true
         run: python sniper_system.py
-      
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scan-logs
-          path: scan_logs/
-          retention-days: 5
