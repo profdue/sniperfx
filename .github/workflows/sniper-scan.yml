@@ -1,8 +1,91 @@
-- name: 🔍 Run Market Scan
-  env:
-    TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-    TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-    GITHUB_ACTIONS: true
-  run: |
-    echo "🎯 Starting Sniper System Scan..."
-    python sniper_system.py
+name: 🎯 Sniper System Auto Scan
+
+on:
+  schedule:
+    - cron: '0 8 * * 1-5'   # 8:00 AM UTC (London Open)
+    - cron: '30 13 * * 1-5' # 1:30 PM UTC (NY Open)
+    - cron: '0 16 * * 1-5'  # 4:00 PM UTC (London Close)
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🔍 Debug Environment
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        echo "🔍 Debug Info:"
+        echo "Bot Token length: ${#TELEGRAM_BOT_TOKEN}"
+        echo "Bot Token starts with: ${TELEGRAM_BOT_TOKEN:0:10}"
+        echo "Chat ID: $TELEGRAM_CHAT_ID"
+        echo ""
+        echo "Testing Telegram connection..."
+        python -c "
+import requests
+import os
+import sys
+
+bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+
+print(f'Bot token length: {len(bot_token) if bot_token else 0}')
+print(f'Chat ID: {chat_id}')
+
+# Send test message
+url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
+payload = {
+    'chat_id': chat_id,
+    'text': '🔧 <b>Debug Test</b>\\nWorkflow is running!',
+    'parse_mode': 'HTML'
+}
+try:
+    response = requests.post(url, json=payload, timeout=10)
+    data = response.json()
+    if data.get('ok'):
+        print('✅ Telegram test successful!')
+    else:
+        print(f'❌ Telegram error: {data}')
+        sys.exit(1)
+except Exception as e:
+    print(f'❌ Error: {e}')
+    sys.exit(1)
+"
+    
+    - name: 🔍 Run Market Scan
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        GITHUB_ACTIONS: true
+      run: |
+        echo "🎯 Starting Sniper System Scan..."
+        python sniper_system.py
+    
+    - name: 💾 Save scan logs
+      if: always()
+      run: |
+        mkdir -p scan_logs
+        echo "Scan completed at $(date)" >> scan_logs/last_scan.log
+    
+    - name: 📤 Upload logs as artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scan-logs
+        path: scan_logs/
+        retention-days: 5
