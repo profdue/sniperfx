@@ -274,6 +274,12 @@ class TradeTracker:
                 continue
             
             current = current_prices[symbol]
+            # Convert to float if it's a Series
+            if hasattr(current, 'iloc'):
+                current = float(current.iloc[-1])
+            else:
+                current = float(current)
+            
             print(f"   🔍 {symbol}: Current={current:.5f}, Entry={trade['entry']:.5f}, Stop={trade['stop']:.5f}")
             
             result = self.check_trade_status(trade, current)
@@ -1486,17 +1492,23 @@ Features: Trade Tracking + R:R Display
         for pair in self.pairs:
             try:
                 yf_symbol = "GC=F" if pair == 'XAUUSD' else f"{pair}=X"
-                data = yf.download(yf_symbol, period='1d', interval='1m', progress=False)
-                if not data.empty:
-                    current_prices[pair] = data['Close'].iloc[-1]
+                data = yf.download(yf_symbol, period='1d', interval='5m', progress=False)
+                if not data.empty and len(data) > 0:
+                    # Get the latest close price
+                    current_prices[pair] = float(data['Close'].iloc[-1])
                     print(f"   {pair}: {current_prices[pair]:.5f}")
+                else:
+                    print(f"   {pair}: No data available")
             except Exception as e:
-                print(f"   {pair}: Error getting price")
+                print(f"   {pair}: Error getting price - {str(e)}")
         
         # Check all active trades
-        updates = self.tracker.check_trades(current_prices)
-        for update in updates:
-            self.telegram.send_message(update)
+        if self.tracker.active_trades:
+            updates = self.tracker.check_trades(current_prices)
+            for update in updates:
+                self.telegram.send_message(update)
+        else:
+            print("\n📊 No active trades to check")
         
         # Send daily summary
         print("\n📱 Sending daily summary...")
