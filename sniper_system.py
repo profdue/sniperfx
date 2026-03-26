@@ -36,274 +36,6 @@ if IN_GITHUB_ACTIONS:
     print("⚡ Running in GitHub Actions (automated mode)")
 
 # ============================================
-# TRADE TRACKER CLASS
-# ============================================
-
-class TradeTracker:
-    """Tracks all trades and sends updates"""
-    
-    def __init__(self, telegram):
-        self.telegram = telegram
-        self.trades_file = 'active_trades.json'
-        self.history_file = 'trade_history.json'
-        self.load_trades()
-    
-    def load_trades(self):
-        """Load active trades from file"""
-        if os.path.exists(self.trades_file):
-            with open(self.trades_file, 'r') as f:
-                self.active_trades = json.load(f)
-        else:
-            self.active_trades = {}
-        
-        if os.path.exists(self.history_file):
-            with open(self.history_file, 'r') as f:
-                self.history = json.load(f)
-        else:
-            self.history = []
-    
-    def save_trades(self):
-        """Save active trades to file"""
-        with open(self.trades_file, 'w') as f:
-            json.dump(self.active_trades, f, indent=2)
-        with open(self.history_file, 'w') as f:
-            json.dump(self.history, f, indent=2)
-    
-    def add_trade(self, signal, position, analysis):
-        """Add a new trade to tracking"""
-        trade_id = f"{signal['symbol']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
-        # Calculate R:R for each target
-        if 'SHORT' in signal['type']:
-            rr1 = (signal['entry_market'] - signal['target1']) / (signal['stop'] - signal['entry_market'])
-            rr2 = (signal['entry_market'] - signal['target2']) / (signal['stop'] - signal['entry_market'])
-            rr3 = (signal['entry_market'] - signal['target3']) / (signal['stop'] - signal['entry_market'])
-        else:
-            rr1 = (signal['target1'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
-            rr2 = (signal['target2'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
-            rr3 = (signal['target3'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
-        
-        trade = {
-            'id': trade_id,
-            'symbol': signal['symbol'],
-            'type': signal['type'],
-            'subtype': signal['subtype'],
-            'entry': signal['entry_limit'],
-            'stop': signal['stop'],
-            'target1': signal['target1'],
-            'target2': signal['target2'],
-            'target3': signal['target3'],
-            'rr1': round(rr1, 2),
-            'rr2': round(rr2, 2),
-            'rr3': round(rr3, 2),
-            'lots': position['mini_lots'],
-            'risk_amount': position['risk_amount'],
-            'entry_time': datetime.now().isoformat(),
-            'status': 'ACTIVE',
-            'hit_targets': [],
-            'rejection': signal.get('rejection_score', 0),
-            'regime': analysis['regime']
-        }
-        
-        self.active_trades[trade_id] = trade
-        self.save_trades()
-        
-        # Send confirmation
-        emoji = "🔴 SHORT" if 'SHORT' in signal['type'] else "🟢 LONG"
-        msg = f"""
-<b>📈 TRADE RECORDED - NOW TRACKING</b>
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-
-<b>{emoji} {signal['symbol']}</b>
-<b>Entry:</b> <code>{signal['entry_limit']:.5f}</code>
-<b>Stop:</b> <code>{signal['stop']:.5f}</code>
-<b>Risk:</b> ${position['risk_amount']:.2f} ({position['risk_percent']:.1f}%)
-
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-<b>🎯 TARGETS (with R:R)</b>
-<b>T1:</b> <code>{signal['target1']:.5f}</code> (1:{rr1:.2f})
-<b>T2:</b> <code>{signal['target2']:.5f}</code> (1:{rr2:.2f})
-<b>T3:</b> <code>{signal['target3']:.5f}</code> (1:{rr3:.2f})
-
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-<i>I'll alert you when any target or stop is hit!</i>
-"""
-        self.telegram.send_message(msg)
-    
-    def check_trades(self, current_prices):
-        """Check all active trades against current prices"""
-        updates = []
-        
-        for trade_id, trade in list(self.active_trades.items()):
-            symbol = trade['symbol']
-            if symbol not in current_prices:
-                continue
-            
-            current = current_prices[symbol]
-            result = self.check_trade_status(trade, current)
-            
-            if result:
-                updates.append(result)
-                if trade['status'] == 'CLOSED':
-                    # Move to history
-                    trade['close_time'] = datetime.now().isoformat()
-                    trade['close_price'] = current
-                    self.history.append(trade)
-                    del self.active_trades[trade_id]
-        
-        if updates:
-            self.save_trades()
-        
-        return updates
-    
-    def check_trade_status(self, trade, current_price):
-        """Check if trade hit any levels"""
-        
-        if 'SHORT' in trade['type']:
-            # For shorts, price going DOWN is good
-            if current_price <= trade['target1'] and 1 not in trade['hit_targets']:
-                trade['hit_targets'].append(1)
-                return self.target_hit(trade, 1, current_price)
-            
-            elif current_price <= trade['target2'] and 2 not in trade['hit_targets']:
-                trade['hit_targets'].append(2)
-                return self.target_hit(trade, 2, current_price)
-            
-            elif current_price <= trade['target3'] and 3 not in trade['hit_targets']:
-                trade['hit_targets'].append(3)
-                trade['status'] = 'CLOSED'
-                return self.target_hit(trade, 3, current_price)
-            
-            elif current_price >= trade['stop']:
-                trade['status'] = 'CLOSED'
-                return self.stop_hit(trade, current_price)
-        
-        else:  # LONG
-            if current_price >= trade['target1'] and 1 not in trade['hit_targets']:
-                trade['hit_targets'].append(1)
-                return self.target_hit(trade, 1, current_price)
-            
-            elif current_price >= trade['target2'] and 2 not in trade['hit_targets']:
-                trade['hit_targets'].append(2)
-                return self.target_hit(trade, 2, current_price)
-            
-            elif current_price >= trade['target3'] and 3 not in trade['hit_targets']:
-                trade['hit_targets'].append(3)
-                trade['status'] = 'CLOSED'
-                return self.target_hit(trade, 3, current_price)
-            
-            elif current_price <= trade['stop']:
-                trade['status'] = 'CLOSED'
-                return self.stop_hit(trade, current_price)
-        
-        return None
-    
-    def target_hit(self, trade, target_num, current_price):
-        """Handle target hit"""
-        # Calculate profit
-        if 'SHORT' in trade['type']:
-            pips = (trade['entry'] - current_price) * 10000 if 'JPY' not in trade['symbol'] else (trade['entry'] - current_price) * 100
-            profit = pips * trade['lots']
-        else:
-            pips = (current_price - trade['entry']) * 10000 if 'JPY' not in trade['symbol'] else (current_price - trade['entry']) * 100
-            profit = pips * trade['lots']
-        
-        # Get R:R for this target
-        rr = trade[f'rr{target_num}']
-        
-        status = "🏆 FINAL TARGET - TRADE CLOSED" if target_num == 3 else f"✅ TARGET {target_num} HIT"
-        
-        msg = f"""
-<b>{status}</b>
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-
-<b>{'🔴' if 'SHORT' in trade['type'] else '🟢'} {trade['symbol']}</b>
-<b>Entry:</b> <code>{trade['entry']:.5f}</code>
-<b>Target {target_num}:</b> <code>{current_price:.5f}</code>
-<b>R:R Achieved:</b> 1:{rr}
-
-<b>💰 PROFIT:</b> <b>${profit:.2f}</b>
-
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-{'' if target_num == 3 else f'<i>Still holding for target {target_num + 1}...</i>'}
-"""
-        return msg
-    
-    def stop_hit(self, trade, current_price):
-        """Handle stop loss hit"""
-        # Calculate loss
-        if 'SHORT' in trade['type']:
-            pips = (current_price - trade['entry']) * 10000 if 'JPY' not in trade['symbol'] else (current_price - trade['entry']) * 100
-        else:
-            pips = (trade['entry'] - current_price) * 10000 if 'JPY' not in trade['symbol'] else (trade['entry'] - current_price) * 100
-        
-        loss = pips * trade['lots']
-        
-        msg = f"""
-<b>❌ STOP LOSS HIT - TRADE CLOSED</b>
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-
-<b>{'🔴' if 'SHORT' in trade['type'] else '🟢'} {trade['symbol']}</b>
-<b>Entry:</b> <code>{trade['entry']:.5f}</code>
-<b>Stop:</b> <code>{current_price:.5f}</code>
-
-<b>📉 LOSS:</b> <b>${loss:.2f}</b>
-
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-<i>Better luck next time! 🎯</i>
-"""
-        return msg
-    
-    def weekly_report(self):
-        """Generate weekly performance report"""
-        # Filter trades from last 7 days
-        week_ago = datetime.now() - timedelta(days=7)
-        week_trades = [t for t in self.history 
-                      if datetime.fromisoformat(t['close_time']) > week_ago]
-        
-        if not week_trades:
-            return "<b>📊 No trades this week</b>"
-        
-        wins = [t for t in week_trades if t['status'] == 'CLOSED' and t['close_price'] and 
-                (('SHORT' in t['type'] and t['close_price'] < t['entry']) or
-                 ('LONG' in t['type'] and t['close_price'] > t['entry']))]
-        
-        losses = [t for t in week_trades if t['status'] == 'CLOSED' and t not in wins]
-        
-        # Calculate P&L
-        total_pnl = 0
-        for t in week_trades:
-            if t['status'] == 'CLOSED':
-                if 'SHORT' in t['type']:
-                    pips = (t['entry'] - t['close_price']) * 10000 if 'JPY' not in t['symbol'] else (t['entry'] - t['close_price']) * 100
-                else:
-                    pips = (t['close_price'] - t['entry']) * 10000 if 'JPY' not in t['symbol'] else (t['close_price'] - t['entry']) * 100
-                total_pnl += pips * t['lots']
-        
-        win_rate = len(wins) / len(week_trades) * 100 if week_trades else 0
-        
-        # Calculate average R:R
-        avg_rr = np.mean([max(t['rr1'], t['rr2'], t['rr3']) for t in week_trades]) if week_trades else 0
-        
-        msg = f"""
-<b>📊 WEEKLY PERFORMANCE REPORT</b>
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-
-<b>Trades:</b> {len(week_trades)}
-<b>✅ Wins:</b> {len(wins)}
-<b>❌ Losses:</b> {len(losses)}
-<b>Win Rate:</b> {win_rate:.1f}%
-<b>Avg R:R:</b> 1:{avg_rr:.2f}
-
-<b>💰 TOTAL P&L:</b> <b>${total_pnl:.2f}</b>
-
-<b>━━━━━━━━━━━━━━━━━━━━━</b>
-<i>Great job this week! 🎯</i>
-"""
-        return msg
-
-
-# ============================================
 # TELEGRAM NOTIFIER CLASS
 # ============================================
 
@@ -424,6 +156,428 @@ class TelegramNotifier:
 
 
 # ============================================
+# TRADE TRACKER CLASS
+# ============================================
+
+class TradeTracker:
+    """Tracks all trades and sends updates with full P&L"""
+    
+    def __init__(self, telegram):
+        self.telegram = telegram
+        self.trades_file = 'active_trades.json'
+        self.history_file = 'trade_history.json'
+        self.load_trades()
+    
+    def load_trades(self):
+        """Load active trades from file"""
+        if os.path.exists(self.trades_file):
+            try:
+                with open(self.trades_file, 'r') as f:
+                    self.active_trades = json.load(f)
+            except:
+                self.active_trades = {}
+        else:
+            self.active_trades = {}
+        
+        if os.path.exists(self.history_file):
+            try:
+                with open(self.history_file, 'r') as f:
+                    self.history = json.load(f)
+            except:
+                self.history = []
+        else:
+            self.history = []
+    
+    def save_trades(self):
+        """Save active trades to file"""
+        try:
+            with open(self.trades_file, 'w') as f:
+                json.dump(self.active_trades, f, indent=2)
+            with open(self.history_file, 'w') as f:
+                json.dump(self.history, f, indent=2)
+            print(f"💾 Saved {len(self.active_trades)} active trades, {len(self.history)} history trades")
+        except Exception as e:
+            print(f"❌ Error saving trades: {e}")
+    
+    def add_trade(self, signal, position, analysis):
+        """Add a new trade to tracking"""
+        trade_id = f"{signal['symbol']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Calculate R:R for each target
+        if 'SHORT' in signal['type']:
+            rr1 = (signal['entry_market'] - signal['target1']) / (signal['stop'] - signal['entry_market'])
+            rr2 = (signal['entry_market'] - signal['target2']) / (signal['stop'] - signal['entry_market'])
+            rr3 = (signal['entry_market'] - signal['target3']) / (signal['stop'] - signal['entry_market'])
+        else:
+            rr1 = (signal['target1'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
+            rr2 = (signal['target2'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
+            rr3 = (signal['target3'] - signal['entry_market']) / (signal['entry_market'] - signal['stop'])
+        
+        trade = {
+            'id': trade_id,
+            'symbol': signal['symbol'],
+            'type': signal['type'],
+            'subtype': signal['subtype'],
+            'entry': signal['entry_limit'],
+            'entry_market': signal['entry_market'],
+            'stop': signal['stop'],
+            'target1': signal['target1'],
+            'target2': signal['target2'],
+            'target3': signal['target3'],
+            'rr1': round(rr1, 2),
+            'rr2': round(rr2, 2),
+            'rr3': round(rr3, 2),
+            'lots': position['mini_lots'],
+            'risk_amount': position['risk_amount'],
+            'entry_time': datetime.now().isoformat(),
+            'status': 'ACTIVE',
+            'hit_targets': [],
+            'rejection': signal.get('rejection_score', 0),
+            'regime': analysis['regime']
+        }
+        
+        self.active_trades[trade_id] = trade
+        self.save_trades()
+        
+        # Send confirmation
+        emoji = "🔴 SHORT" if 'SHORT' in signal['type'] else "🟢 LONG"
+        msg = f"""
+<b>📈 TRADE RECORDED - NOW TRACKING</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+
+<b>{emoji} {signal['symbol']}</b>
+<b>Entry:</b> <code>{signal['entry_limit']:.5f}</code>
+<b>Stop:</b> <code>{signal['stop']:.5f}</code>
+<b>Risk:</b> ${position['risk_amount']:.2f} ({position['risk_percent']:.1f}%)
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+<b>🎯 TARGETS (with R:R)</b>
+<b>T1:</b> <code>{signal['target1']:.5f}</code> (1:{rr1:.2f})
+<b>T2:</b> <code>{signal['target2']:.5f}</code> (1:{rr2:.2f})
+<b>T3:</b> <code>{signal['target3']:.5f}</code> (1:{rr3:.2f})
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+<i>I'll alert you when any target or stop is hit!</i>
+"""
+        self.telegram.send_message(msg)
+    
+    def check_trades(self, current_prices):
+        """Check all active trades against current prices"""
+        updates = []
+        
+        print(f"\n📊 Checking {len(self.active_trades)} active trades...")
+        
+        for trade_id, trade in list(self.active_trades.items()):
+            symbol = trade['symbol']
+            if symbol not in current_prices:
+                print(f"   ⚠️ {symbol}: No current price available")
+                continue
+            
+            current = current_prices[symbol]
+            print(f"   🔍 {symbol}: Current={current:.5f}, Entry={trade['entry']:.5f}, Stop={trade['stop']:.5f}")
+            
+            result = self.check_trade_status(trade, current)
+            
+            if result:
+                updates.append(result)
+                if trade['status'] == 'CLOSED':
+                    # Calculate final P&L before moving to history
+                    self.calculate_final_pnl(trade, current)
+                    # Add close time
+                    trade['close_time'] = datetime.now().isoformat()
+                    # Move to history
+                    self.history.append(trade.copy())
+                    print(f"   ✅ {symbol}: Trade closed! P&L: ${trade.get('pnl', 0):.2f}")
+                    del self.active_trades[trade_id]
+        
+        if updates:
+            self.save_trades()
+            print(f"📝 Saved {len(updates)} updates to trade history")
+        
+        return updates
+    
+    def calculate_final_pnl(self, trade, close_price):
+        """Calculate final P&L for closed trade"""
+        try:
+            # Calculate pips based on pair type
+            if 'SHORT' in trade['type']:
+                if 'JPY' in trade['symbol']:
+                    pips = (trade['entry'] - close_price) * 100
+                elif trade['symbol'] == 'XAUUSD':
+                    pips = (trade['entry'] - close_price) * 10
+                else:
+                    pips = (trade['entry'] - close_price) * 10000
+            else:  # LONG
+                if 'JPY' in trade['symbol']:
+                    pips = (close_price - trade['entry']) * 100
+                elif trade['symbol'] == 'XAUUSD':
+                    pips = (close_price - trade['entry']) * 10
+                else:
+                    pips = (close_price - trade['entry']) * 10000
+            
+            # Calculate profit/loss
+            trade['close_price'] = close_price
+            trade['pips'] = pips
+            trade['pnl'] = pips * trade['lots']
+            
+            # Determine closing reason
+            if trade['hit_targets']:
+                if 3 in trade['hit_targets']:
+                    trade['close_reason'] = f"🎯 FINAL TARGET (TP3)"
+                else:
+                    trade['close_reason'] = f"✅ Target {max(trade['hit_targets'])} Hit"
+            else:
+                trade['close_reason'] = f"❌ Stop Loss Hit"
+            
+            # Send final result notification
+            self.send_final_result(trade)
+            
+        except Exception as e:
+            print(f"   ❌ Error calculating P&L: {e}")
+            trade['pnl'] = 0
+            trade['close_reason'] = f"Error calculating: {e}"
+    
+    def send_final_result(self, trade):
+        """Send final trade result to Telegram"""
+        emoji = "✅ PROFIT" if trade['pnl'] > 0 else "❌ LOSS"
+        
+        msg = f"""
+<b>{emoji} TRADE CLOSED</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+
+<b>{'🔴' if 'SHORT' in trade['type'] else '🟢'} {trade['symbol']}</b>
+<b>Entry:</b> <code>{trade['entry']:.5f}</code>
+<b>Close:</b> <code>{trade['close_price']:.5f}</code>
+
+<b>📊 RESULT:</b>
+<b>P&L:</b> ${trade['pnl']:.2f}
+<b>Pips:</b> {trade['pips']:.1f}
+<b>Risk:</b> ${trade['risk_amount']:.2f}
+<b>R:R Achieved:</b> 1:{trade.get(f'rr{len(trade["hit_targets"])}', 0):.2f}
+
+<b>Reason:</b> {trade['close_reason']}
+
+<b>Duration:</b> {self.calculate_duration(trade['entry_time'], trade['close_time'])}
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+"""
+        self.telegram.send_message(msg)
+    
+    def calculate_duration(self, start_time, end_time):
+        """Calculate trade duration"""
+        start = datetime.fromisoformat(start_time)
+        end = datetime.fromisoformat(end_time)
+        duration = end - start
+        
+        hours = duration.total_seconds() / 3600
+        
+        if hours < 1:
+            minutes = duration.total_seconds() / 60
+            return f"{minutes:.0f} minutes"
+        elif hours < 24:
+            return f"{hours:.1f} hours"
+        else:
+            return f"{hours/24:.1f} days"
+    
+    def check_trade_status(self, trade, current_price):
+        """Check if trade hit any levels"""
+        
+        if 'SHORT' in trade['type']:
+            # For shorts, price going DOWN is good
+            if current_price <= trade['target1'] and 1 not in trade['hit_targets']:
+                trade['hit_targets'].append(1)
+                return self.target_hit(trade, 1, current_price)
+            
+            elif current_price <= trade['target2'] and 2 not in trade['hit_targets']:
+                trade['hit_targets'].append(2)
+                return self.target_hit(trade, 2, current_price)
+            
+            elif current_price <= trade['target3'] and 3 not in trade['hit_targets']:
+                trade['hit_targets'].append(3)
+                trade['status'] = 'CLOSED'
+                return self.target_hit(trade, 3, current_price)
+            
+            elif current_price >= trade['stop']:
+                trade['status'] = 'CLOSED'
+                return self.stop_hit(trade, current_price)
+        
+        else:  # LONG
+            if current_price >= trade['target1'] and 1 not in trade['hit_targets']:
+                trade['hit_targets'].append(1)
+                return self.target_hit(trade, 1, current_price)
+            
+            elif current_price >= trade['target2'] and 2 not in trade['hit_targets']:
+                trade['hit_targets'].append(2)
+                return self.target_hit(trade, 2, current_price)
+            
+            elif current_price >= trade['target3'] and 3 not in trade['hit_targets']:
+                trade['hit_targets'].append(3)
+                trade['status'] = 'CLOSED'
+                return self.target_hit(trade, 3, current_price)
+            
+            elif current_price <= trade['stop']:
+                trade['status'] = 'CLOSED'
+                return self.stop_hit(trade, current_price)
+        
+        return None
+    
+    def target_hit(self, trade, target_num, current_price):
+        """Handle target hit"""
+        # Calculate profit so far
+        if 'SHORT' in trade['type']:
+            if 'JPY' in trade['symbol']:
+                pips = (trade['entry'] - current_price) * 100
+            elif trade['symbol'] == 'XAUUSD':
+                pips = (trade['entry'] - current_price) * 10
+            else:
+                pips = (trade['entry'] - current_price) * 10000
+        else:
+            if 'JPY' in trade['symbol']:
+                pips = (current_price - trade['entry']) * 100
+            elif trade['symbol'] == 'XAUUSD':
+                pips = (current_price - trade['entry']) * 10
+            else:
+                pips = (current_price - trade['entry']) * 10000
+        
+        profit = pips * trade['lots']
+        
+        # Get R:R for this target
+        rr = trade[f'rr{target_num}']
+        
+        status = "🏆 FINAL TARGET - TRADE CLOSED" if target_num == 3 else f"✅ TARGET {target_num} HIT"
+        
+        msg = f"""
+<b>{status}</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+
+<b>{'🔴' if 'SHORT' in trade['type'] else '🟢'} {trade['symbol']}</b>
+<b>Entry:</b> <code>{trade['entry']:.5f}</code>
+<b>Target {target_num}:</b> <code>{current_price:.5f}</code>
+<b>R:R Achieved:</b> 1:{rr:.2f}
+
+<b>💰 PROFIT SO FAR:</b> <b>${profit:.2f}</b>
+<b>Pips:</b> {pips:.1f}
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+{'' if target_num == 3 else f'<i>Still holding for target {target_num + 1}...</i>'}
+"""
+        return msg
+    
+    def stop_hit(self, trade, current_price):
+        """Handle stop loss hit"""
+        # Calculate loss
+        if 'SHORT' in trade['type']:
+            if 'JPY' in trade['symbol']:
+                pips = (current_price - trade['entry']) * 100
+            elif trade['symbol'] == 'XAUUSD':
+                pips = (current_price - trade['entry']) * 10
+            else:
+                pips = (current_price - trade['entry']) * 10000
+        else:
+            if 'JPY' in trade['symbol']:
+                pips = (trade['entry'] - current_price) * 100
+            elif trade['symbol'] == 'XAUUSD':
+                pips = (trade['entry'] - current_price) * 10
+            else:
+                pips = (trade['entry'] - current_price) * 10000
+        
+        loss = pips * trade['lots']
+        
+        msg = f"""
+<b>❌ STOP LOSS HIT - TRADE CLOSED</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+
+<b>{'🔴' if 'SHORT' in trade['type'] else '🟢'} {trade['symbol']}</b>
+<b>Entry:</b> <code>{trade['entry']:.5f}</code>
+<b>Stop:</b> <code>{current_price:.5f}</code>
+
+<b>📉 LOSS:</b> <b>${loss:.2f}</b>
+<b>Pips:</b> {pips:.1f}
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+<i>Better luck next time! 🎯</i>
+"""
+        return msg
+    
+    def weekly_report(self):
+        """Generate weekly performance report"""
+        # Filter trades from last 7 days
+        week_ago = datetime.now() - timedelta(days=7)
+        week_trades = [t for t in self.history 
+                      if datetime.fromisoformat(t['close_time']) > week_ago]
+        
+        if not week_trades:
+            return "<b>📊 No trades this week</b>"
+        
+        wins = [t for t in week_trades if t.get('pnl', 0) > 0]
+        losses = [t for t in week_trades if t.get('pnl', 0) < 0]
+        
+        total_pnl = sum(t.get('pnl', 0) for t in week_trades)
+        win_rate = len(wins) / len(week_trades) * 100 if week_trades else 0
+        
+        # Calculate average R:R
+        avg_rr = np.mean([max(t.get('rr1', 0), t.get('rr2', 0), t.get('rr3', 0)) for t in week_trades]) if week_trades else 0
+        
+        # Find best and worst trades
+        best_trade = max(week_trades, key=lambda x: x.get('pnl', 0)) if week_trades else None
+        worst_trade = min(week_trades, key=lambda x: x.get('pnl', 0)) if week_trades else None
+        
+        msg = f"""
+<b>📊 WEEKLY PERFORMANCE REPORT</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+
+<b>Trades:</b> {len(week_trades)}
+<b>✅ Wins:</b> {len(wins)}
+<b>❌ Losses:</b> {len(losses)}
+<b>Win Rate:</b> {win_rate:.1f}%
+<b>Avg R:R:</b> 1:{avg_rr:.2f}
+
+<b>💰 TOTAL P&L:</b> <b>${total_pnl:.2f}</b>
+
+<b>🏆 Best Trade:</b> ${best_trade['pnl']:.2f} ({best_trade['symbol']}) if best_trade else 'N/A'
+<b>📉 Worst Trade:</b> ${worst_trade['pnl']:.2f} ({worst_trade['symbol']}) if worst_trade else 'N/A'
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+<i>Great job this week! 🎯</i>
+"""
+        return msg
+    
+    def get_performance_summary(self):
+        """Get overall performance summary"""
+        if not self.history:
+            return "<b>📊 No trades in history yet</b>"
+        
+        total_trades = len(self.history)
+        winning_trades = [t for t in self.history if t.get('pnl', 0) > 0]
+        losing_trades = [t for t in self.history if t.get('pnl', 0) < 0]
+        
+        total_pnl = sum(t.get('pnl', 0) for t in self.history)
+        win_rate = len(winning_trades) / total_trades * 100 if total_trades else 0
+        
+        avg_win = sum(t.get('pnl', 0) for t in winning_trades) / len(winning_trades) if winning_trades else 0
+        avg_loss = sum(t.get('pnl', 0) for t in losing_trades) / len(losing_trades) if losing_trades else 0
+        
+        profit_factor = abs(sum(t.get('pnl', 0) for t in winning_trades) / sum(t.get('pnl', 0) for t in losing_trades)) if losing_trades else float('inf')
+        
+        msg = f"""
+<b>📊 OVERALL PERFORMANCE SUMMARY</b>
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+
+<b>Total Trades:</b> {total_trades}
+<b>✅ Wins:</b> {len(winning_trades)}
+<b>❌ Losses:</b> {len(losing_trades)}
+<b>Win Rate:</b> {win_rate:.1f}%
+
+<b>💰 TOTAL P&L:</b> <b>${total_pnl:.2f}</b>
+<b>Average Win:</b> ${avg_win:.2f}
+<b>Average Loss:</b> ${avg_loss:.2f}
+<b>Profit Factor:</b> {profit_factor:.2f}
+
+<b>━━━━━━━━━━━━━━━━━━━━━</b>
+"""
+        return msg
+
+
+# ============================================
 # MAIN SNIPER SYSTEM CLASS
 # ============================================
 
@@ -451,7 +605,7 @@ class SniperSystem:
         print("📊 Initializing Trade Tracker...")
         self.tracker = TradeTracker(self.telegram)
         
-        # Send startup message (only if not in GitHub Actions or first run)
+        # Send startup message (only if not in GitHub Actions)
         if not IN_GITHUB_ACTIONS:
             startup_msg = f"""
 🤖 <b>Sniper System v5.0 Started</b>
@@ -1393,9 +1547,10 @@ def main():
     print("1. 🎯 LIVE SCAN (run once)")
     print("2. 🏆 TEST GOLD ONLY")
     print("3. 📊 RUN VALIDATION (8 dates)")
+    print("4. 📈 VIEW PERFORMANCE")
     
     try:
-        choice = input("\nEnter choice (1-3): ").strip()
+        choice = input("\nEnter choice (1-4): ").strip()
         
         if choice == '2':
             print("\n" + "="*60)
@@ -1436,6 +1591,16 @@ def main():
             print(f"Total Scans: {system.stats['total_scans']}")
             print(f"Setups Found: {system.stats['setups_found']}")
             print(f"Setup Rate: {system.stats['setups_found']/system.stats['total_scans']*100:.1f}%")
+        
+        elif choice == '4':
+            print("\n" + "="*60)
+            print("📈 PERFORMANCE REPORT")
+            print("="*60)
+            
+            system = SniperSystem()
+            # Just load existing trades
+            print(system.tracker.get_performance_summary())
+            print("\n" + system.tracker.weekly_report())
         
         else:
             # Live scan
