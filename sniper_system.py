@@ -1,6 +1,7 @@
 # ============================================
 # PROFESSIONAL SNIPER TRADING SYSTEM v5.0
 # COMPLETE WITH TRADE TRACKING & R:R DISPLAY
+# FIXED: Duplicate Trade Protection
 # ============================================
 
 import yfinance as yf
@@ -31,6 +32,7 @@ print("🎯 PROFESSIONAL SNIPER TRADING SYSTEM v5.0")
 print("="*60)
 print("\n⚡ TELEGRAM ALERTS ENABLED")
 print("⚡ TRADE TRACKING ENABLED")
+print("⚡ DUPLICATE PROTECTION ENABLED")
 print("⚡ Ready for live trading...")
 if IN_GITHUB_ACTIONS:
     print("⚡ Running in GitHub Actions (automated mode)")
@@ -600,7 +602,8 @@ class SniperSystem:
             'total_scans': 0,
             'setups_found': 0,
             'rejections_by_reason': {},
-            'trades_taken': []
+            'trades_taken': [],
+            'duplicates_skipped': 0
         }
         
         # Initialize Telegram
@@ -619,7 +622,7 @@ class SniperSystem:
 Account: ${account_size}
 Risk: {risk_percent}%
 Pairs: {', '.join(self.pairs)}
-Features: Trade Tracking + R:R Display
+Features: Trade Tracking + R:R Display + Duplicate Protection
 ━━━━━━━━━━━━━━━━━━━━━
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
 """
@@ -709,6 +712,27 @@ Features: Trade Tracking + R:R Display
                 }
             }
         }
+    
+    def check_active_trade_exists(self, symbol, lookback_hours=4):
+        """Check if there's already an active trade for this symbol within lookback period"""
+        # Check active trades
+        for trade_id, trade in self.tracker.active_trades.items():
+            if trade['symbol'] == symbol:
+                trade_time = datetime.fromisoformat(trade['entry_time'])
+                if datetime.now() - trade_time < timedelta(hours=lookback_hours):
+                    print(f"   ⏭️  SKIPPING {symbol} - Active trade exists from {trade_time.strftime('%H:%M')}")
+                    return True
+        
+        # Also check recent history (last 24 hours)
+        for trade in self.tracker.history:
+            if trade['symbol'] == symbol:
+                if 'close_time' in trade:
+                    close_time = datetime.fromisoformat(trade['close_time'])
+                    if datetime.now() - close_time < timedelta(hours=24):
+                        print(f"   ⏭️  SKIPPING {symbol} - Trade closed recently ({close_time.strftime('%H:%M')})")
+                        return True
+        
+        return False
     
     def clean_data(self, df):
         """Standardize column names"""
@@ -1462,6 +1486,12 @@ Features: Trade Tracking + R:R Display
             if analysis:
                 signal = self.generate_trade_signal(analysis)
                 if signal:
+                    # 🚨 NEW: Check for duplicate trades before adding
+                    if self.check_active_trade_exists(pair, lookback_hours=4):
+                        self.stats['duplicates_skipped'] += 1
+                        print(f"   ⏭️  Skipping duplicate {pair} trade - already have active position")
+                        continue
+                    
                     position = self.calculate_position(signal)
                     self.setups.append({
                         'signal': signal,
@@ -1510,9 +1540,11 @@ Features: Trade Tracking + R:R Display
         else:
             print("\n📊 No active trades to check")
         
-        # Send daily summary
+        # Send daily summary with duplicate info
         print("\n📱 Sending daily summary...")
         summary = self.telegram.format_summary(self.setups, self.scan_log)
+        if self.stats['duplicates_skipped'] > 0:
+            summary += f"\n\n⚠️ Skipped {self.stats['duplicates_skipped']} duplicate trades"
         self.telegram.send_message(summary)
         
         # Send weekly report on Fridays
@@ -1529,7 +1561,7 @@ def run_automated_scan():
     print("🚀 Running automated scan...")
     system = SniperSystem()
     system.scan_all()
-    print("✅ Scan complete!")
+    print(f"✅ Scan complete! (Skipped {system.stats['duplicates_skipped']} duplicate trades)")
 
 def main():
     """Main execution"""
@@ -1543,6 +1575,7 @@ def main():
     print("✅ Gold: 6.5x threshold")
     print("✅ Telegram Alerts: ON")
     print("✅ Trade Tracking: ON")
+    print("✅ Duplicate Protection: ON")
     print("✅ R:R Display: ON")
     
     # Check if running in GitHub Actions
@@ -1624,6 +1657,8 @@ def main():
                 print("🟡 NO TRADES TODAY")
                 print("="*60)
                 print("\n✅ Professional patience - waiting for the right setup.")
+            else:
+                print(f"\n✅ Found {len(setups)} trades (skipped {system.stats['duplicates_skipped']} duplicates)")
     
     except EOFError:
         # This handles the case when running in non-interactive environment
