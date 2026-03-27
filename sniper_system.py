@@ -1,7 +1,7 @@
 # ============================================
 # PROFESSIONAL SNIPER TRADING SYSTEM v5.0
 # COMPLETE WITH TRADE TRACKING & R:R DISPLAY
-# FIXED: Duplicate Trade Protection
+# FIXED: Enhanced Duplicate Protection
 # ============================================
 
 import yfinance as yf
@@ -32,7 +32,7 @@ print("🎯 PROFESSIONAL SNIPER TRADING SYSTEM v5.0")
 print("="*60)
 print("\n⚡ TELEGRAM ALERTS ENABLED")
 print("⚡ TRADE TRACKING ENABLED")
-print("⚡ DUPLICATE PROTECTION ENABLED")
+print("⚡ ENHANCED DUPLICATE PROTECTION ENABLED")
 print("⚡ Ready for live trading...")
 if IN_GITHUB_ACTIONS:
     print("⚡ Running in GitHub Actions (automated mode)")
@@ -123,7 +123,7 @@ class TelegramNotifier:
 """
         return message
     
-    def format_summary(self, setups, scan_log):
+    def format_summary(self, setups, scan_log, duplicates_skipped=0):
         """Format daily summary for Telegram"""
         if setups:
             summary = f"""
@@ -135,6 +135,9 @@ class TelegramNotifier:
 """
             for s in setups:
                 summary += f"• {s['signal']['symbol']} {s['signal']['type']} @ {s['signal']['entry_limit']:.5f}\n"
+            
+            if duplicates_skipped > 0:
+                summary += f"\n⚠️ <b>Skipped {duplicates_skipped} duplicate trades</b>"
         else:
             summary = f"""
 <b>📊 DAILY SCAN COMPLETE</b>
@@ -176,7 +179,9 @@ class TradeTracker:
             try:
                 with open(self.trades_file, 'r') as f:
                     self.active_trades = json.load(f)
-            except:
+                print(f"📂 Loaded {len(self.active_trades)} active trades from file")
+            except Exception as e:
+                print(f"⚠️ Error loading active trades: {e}")
                 self.active_trades = {}
         else:
             self.active_trades = {}
@@ -622,7 +627,7 @@ class SniperSystem:
 Account: ${account_size}
 Risk: {risk_percent}%
 Pairs: {', '.join(self.pairs)}
-Features: Trade Tracking + R:R Display + Duplicate Protection
+Features: Trade Tracking + R:R Display + Enhanced Duplicate Protection
 ━━━━━━━━━━━━━━━━━━━━━
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
 """
@@ -713,14 +718,34 @@ Features: Trade Tracking + R:R Display + Duplicate Protection
             }
         }
     
-    def check_active_trade_exists(self, symbol, lookback_hours=4):
-        """Check if there's already an active trade for this symbol within lookback period"""
+    def check_active_trade_exists(self, symbol, lookback_hours=6):
+        """
+        Check if there's already an active or recent trade for this symbol.
+        Returns True if a trade exists within the lookback period.
+        """
+        
+        # Reload trades to ensure we have latest data
+        self.tracker.load_trades()
+        
         # Check active trades
         for trade_id, trade in self.tracker.active_trades.items():
             if trade['symbol'] == symbol:
                 trade_time = datetime.fromisoformat(trade['entry_time'])
-                if datetime.now() - trade_time < timedelta(hours=lookback_hours):
-                    print(f"   ⏭️  SKIPPING {symbol} - Active trade exists from {trade_time.strftime('%H:%M')}")
+                time_diff = datetime.now() - trade_time
+                if time_diff.total_seconds() < lookback_hours * 3600:
+                    print(f"   🚫 DUPLICATE: {symbol} - Active trade from {trade_time.strftime('%H:%M:%S')} ({time_diff.total_seconds()/60:.0f} min ago)")
+                    return True
+        
+        # Check recent trades from this session
+        for taken_trade in self.stats.get('trades_taken', []):
+            if taken_trade['symbol'] == symbol:
+                if isinstance(taken_trade['date'], str):
+                    trade_time = datetime.fromisoformat(taken_trade['date'])
+                else:
+                    trade_time = taken_trade['date']
+                time_diff = datetime.now() - trade_time
+                if time_diff.total_seconds() < lookback_hours * 3600:
+                    print(f"   🚫 DUPLICATE: {symbol} - Already taken this session at {trade_time.strftime('%H:%M:%S')}")
                     return True
         
         # Also check recent history (last 24 hours)
@@ -728,8 +753,9 @@ Features: Trade Tracking + R:R Display + Duplicate Protection
             if trade['symbol'] == symbol:
                 if 'close_time' in trade:
                     close_time = datetime.fromisoformat(trade['close_time'])
-                    if datetime.now() - close_time < timedelta(hours=24):
-                        print(f"   ⏭️  SKIPPING {symbol} - Trade closed recently ({close_time.strftime('%H:%M')})")
+                    time_diff = datetime.now() - close_time
+                    if time_diff.total_seconds() < 24 * 3600:  # 24 hours
+                        print(f"   🚫 DUPLICATE: {symbol} - Trade closed recently at {close_time.strftime('%H:%M:%S')} ({time_diff.total_seconds()/60:.0f} min ago)")
                         return True
         
         return False
@@ -1474,9 +1500,14 @@ Features: Trade Tracking + R:R Display + Duplicate Protection
         print(f"📡 MARKET SCAN{date_str}")
         print("="*60)
         
+        # Force reload trades before each scan to ensure we have latest data
+        self.tracker.load_trades()
+        print(f"📊 Loaded {len(self.tracker.active_trades)} active trades from previous scans")
+        
         self.setups = []
         self.scan_log = []
         self.stats['total_scans'] += len(self.pairs)
+        self.stats['duplicates_skipped'] = 0  # Reset counter
         
         for pair in self.pairs:
             if pair in self.params['pair_specific'] and not self.params['pair_specific'][pair].get('enabled', True):
@@ -1486,10 +1517,10 @@ Features: Trade Tracking + R:R Display + Duplicate Protection
             if analysis:
                 signal = self.generate_trade_signal(analysis)
                 if signal:
-                    # 🚨 NEW: Check for duplicate trades before adding
-                    if self.check_active_trade_exists(pair, lookback_hours=4):
+                    # ENHANCED: Check for duplicate trades before adding
+                    if self.check_active_trade_exists(pair, lookback_hours=6):
                         self.stats['duplicates_skipped'] += 1
-                        print(f"   ⏭️  Skipping duplicate {pair} trade - already have active position")
+                        print(f"   ⏭️  SKIPPING duplicate {pair} trade")
                         continue
                     
                     position = self.calculate_position(signal)
@@ -1499,7 +1530,7 @@ Features: Trade Tracking + R:R Display + Duplicate Protection
                         'analysis': analysis
                     })
                     self.stats['trades_taken'].append({
-                        'date': test_date or datetime.now(),
+                        'date': datetime.now().isoformat(),
                         'symbol': pair,
                         'type': signal['type'],
                         'subtype': signal['subtype'],
@@ -1508,16 +1539,20 @@ Features: Trade Tracking + R:R Display + Duplicate Protection
                         'is_fresh': signal.get('is_fresh_extreme', False)
                     })
                     
-                    # 🚨 SEND TELEGRAM ALERT FOR EACH SETUP
+                    # SEND TELEGRAM ALERT FOR EACH SETUP
                     print(f"\n📱 Sending Telegram alert for {pair}...")
                     alert = self.telegram.format_trade_alert(signal, position, analysis)
                     self.telegram.send_message(alert)
                     
-                    # 📊 ADD TO TRADE TRACKER
+                    # ADD TO TRADE TRACKER
                     self.tracker.add_trade(signal, position, analysis)
+                    
+                    # Force save immediately to prevent duplicate in same session
+                    self.tracker.save_trades()
+                    print(f"   ✅ Saved {pair} trade to active_trades.json")
         
         # Get current prices for all pairs to check active trades
-        print("\n📊 Checking active trades...")
+        print("\n📊 Fetching current prices...")
         current_prices = {}
         for pair in self.pairs:
             try:
@@ -1542,9 +1577,7 @@ Features: Trade Tracking + R:R Display + Duplicate Protection
         
         # Send daily summary with duplicate info
         print("\n📱 Sending daily summary...")
-        summary = self.telegram.format_summary(self.setups, self.scan_log)
-        if self.stats['duplicates_skipped'] > 0:
-            summary += f"\n\n⚠️ Skipped {self.stats['duplicates_skipped']} duplicate trades"
+        summary = self.telegram.format_summary(self.setups, self.scan_log, self.stats['duplicates_skipped'])
         self.telegram.send_message(summary)
         
         # Send weekly report on Fridays
@@ -1552,6 +1585,10 @@ Features: Trade Tracking + R:R Display + Duplicate Protection
             print("\n📊 Sending weekly report...")
             report = self.tracker.weekly_report()
             self.telegram.send_message(report)
+        
+        # Print duplicate summary
+        if self.stats['duplicates_skipped'] > 0:
+            print(f"\n⚠️ Skipped {self.stats['duplicates_skipped']} duplicate trades in this scan")
         
         return self.setups
 
@@ -1575,7 +1612,7 @@ def main():
     print("✅ Gold: 6.5x threshold")
     print("✅ Telegram Alerts: ON")
     print("✅ Trade Tracking: ON")
-    print("✅ Duplicate Protection: ON")
+    print("✅ Enhanced Duplicate Protection: ON (6 hour window)")
     print("✅ R:R Display: ON")
     
     # Check if running in GitHub Actions
@@ -1593,9 +1630,10 @@ def main():
     print("2. 🏆 TEST GOLD ONLY")
     print("3. 📊 RUN VALIDATION (8 dates)")
     print("4. 📈 VIEW PERFORMANCE")
+    print("5. 🧹 RESET ACTIVE TRADES")
     
     try:
-        choice = input("\nEnter choice (1-4): ").strip()
+        choice = input("\nEnter choice (1-5): ").strip()
         
         if choice == '2':
             print("\n" + "="*60)
@@ -1646,6 +1684,28 @@ def main():
             # Just load existing trades
             print(system.tracker.get_performance_summary())
             print("\n" + system.tracker.weekly_report())
+        
+        elif choice == '5':
+            print("\n" + "="*60)
+            print("⚠️  RESET ACTIVE TRADES")
+            print("="*60)
+            confirm = input("\nThis will delete ALL active trades. Are you sure? (yes/no): ")
+            if confirm.lower() == 'yes':
+                # Backup existing trades
+                if os.path.exists('active_trades.json'):
+                    backup_name = f"active_trades_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                    os.rename('active_trades.json', backup_name)
+                    print(f"✅ Backed up active trades to {backup_name}")
+                
+                # Create empty active trades
+                with open('active_trades.json', 'w') as f:
+                    json.dump({}, f)
+                
+                print("✅ Active trades cleared!")
+                print("\n⚠️  IMPORTANT: If you're live trading, please check your broker platform")
+                print("   to ensure you don't have multiple positions open!")
+            else:
+                print("❌ Operation cancelled")
         
         else:
             # Live scan
